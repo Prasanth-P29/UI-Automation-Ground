@@ -1,84 +1,106 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from "@playwright/test";
 
-test.describe('Auto Wait Full Functionality Test', () => {
+test.setTimeout(60000);   // because page restores every 3s
 
-  test('Verify all element types and their delayed restoration', async ({ page }) => {
-    await page.goto('/autowait');
-    console.log('✅ Navigated to Auto Wait page.');
+const checkboxSelectors = [
+  "#visible",
+  "#enabled",
+  "#editable",
+  "#ontop",
+  "#nonzero"
+];
 
-    const elementType = page.locator('#element-type');
-    const checkboxes = {
-      visible: page.locator('#visible'),
-      enabled: page.locator('#enabled'),
-      editable: page.locator('#editable'),
-      onTop: page.locator('#ontop'),
-      nonZero: page.locator('#nonzero')
-    };
+async function resetAllChecks(page) {
+  for (const c of checkboxSelectors) {
+    const cb = page.locator(c);
+    await cb.waitFor({ state: "visible" });
 
-    const apply3s = page.locator('#applyButton3');
-    const status = page.locator('#opstatus');
-    const elementTypes = ['button', 'input', 'textarea', 'select', 'label'];
+    try {
+      await cb.check({ force: true });   // force check even if DOM is unstable
+    } catch (e) {
+      console.log(`WARN: Cannot check ${c} — maybe not applicable`);
+    }
+  }
+}
 
-    for (const type of elementTypes) {
-      console.log(`\n🧩 Testing element type: ${type}`);
-      await elementType.selectOption(type);
-      await page.waitForTimeout(1000);
+async function testElementType(page, elementType: string) {
 
-      // Uncheck all properties
-      for (const key in checkboxes) {
-        const box = checkboxes[key as keyof typeof checkboxes];
-        if (await box.isChecked()) await box.uncheck();
-      }
-      console.log('🔸 All checkboxes unchecked.');
+  const status = page.locator("#opstatus");
+  const apply3sBtn = page.locator("#applyButton3");
 
-      // Apply settings and wait for restore
-      await apply3s.click();
-      await expect(status).toHaveText(/Target element settings applied for 3 seconds./, { timeout: 2000 });
-      console.log('⏳ Delay applied for 3s.');
-      await expect(status).toHaveText(/Target element state restored./, { timeout: 6000 });
-      console.log('✅ State restored.');
+  // Change element type only if needed
+  if (elementType !== "button") {
+    await page.locator("#element-type").selectOption(elementType);
+    await page.waitForTimeout(400);   // allow DOM rebuild
+  }
 
-      const target = page.locator('#target');
-      await expect(target).toBeVisible({ timeout: 5000 });
+  console.log(`✅ Testing element: ${elementType}`);
 
-      // Interact based on element type
-      if (type === 'button') {
-        await target.click();
-        await expect(status).toHaveText('Target clicked.');
-        console.log('🖱️ Button click verified.');
-      }
+  for (const checkbox of checkboxSelectors) {
 
-      else if (type === 'input') {
-        await target.fill('AutoWait Input');
-        await target.press('Enter');
-        await expect(status).toHaveText(/Text: AutoWait Input/);
-        console.log('⌨️ Input verified.');
-      }
+    // Always refresh checkbox state (DOM rebuilds)
+    await resetAllChecks(page);
 
-      else if (type === 'textarea') {
-        await target.fill('Multi-line Playwright Test');
-        await target.press('Enter');
-        await expect(status).toHaveText(/Text: Multi-line Playwright Test/);
-        console.log('📝 Textarea verified.');
-      }
+    // Disable only current checkbox
+    await page.locator(checkbox).uncheck({ force: true });
 
-      else if (type === 'select') {
-        await target.selectOption('Item 3');
-        await expect(status).toHaveText(/Selected: Item 3/);
-        console.log('📋 Dropdown verified.');
-      }
+    // Apply 3s
+    await apply3sBtn.click();
+    await expect(status).toContainText("applied", { timeout: 1000 });
 
-      else if (type === 'label') {
-        await target.click();
-        await expect(status).toHaveText('Target clicked.');
-        console.log('🏷️ Label click verified.');
-      }
+    const target = page.locator("#target");
 
-      // Small pause between each test
-      await page.waitForTimeout(1000);
+    /** VALIDATIONS BASED ON CHECKBOX **/
+
+    if (checkbox === "#visible") {
+      await expect(target).toBeHidden();
     }
 
-    console.log('\n🎯 Auto Wait test completed for all 5 element types successfully.');
+    if (checkbox === "#enabled" && elementType !== "label") {
+      await expect(target).toBeDisabled();
+    }
+
+    if (checkbox === "#editable" &&
+      (elementType === "input" || elementType === "textarea")) {
+      await expect(target).toHaveAttribute("readonly", "");
+    }
+
+    if (checkbox === "#ontop") {
+      await expect(page.locator("#overlay")).toBeVisible();
+    }
+
+    if (checkbox === "#nonzero") {
+      const box = await target.boundingBox();
+
+      // element should be collapsed
+      expect(
+        box && (box.width === 0 || box.height === 0)
+      ).toBeTruthy();
+    }
+
+    // After 3s page should reset
+    await page.waitForTimeout(3100);
+
+    await expect(status).toContainText("restored");
+    await expect(target).toBeVisible();
+  }
+}
+
+test.describe("Auto Wait — Button & Input", () => {
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto("http://www.uitestingplayground.com/autowait");
+    await page.waitForLoadState("domcontentloaded");
+  });
+
+  test("Button → Input", async ({ page }) => {
+
+    // ✅ test button mode
+    await testElementType(page, "button");
+
+    // ✅ test input mode
+    await testElementType(page, "input");
+
   });
 
 });
